@@ -1,0 +1,6 @@
+# python=3.10.15
+
+torch==2.5.1
+numpy==2.1.3
+underthesea==6.8.4
+matplotlib==3.9.3
