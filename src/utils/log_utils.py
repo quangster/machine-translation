@@ -1,7 +1,6 @@
 from typing import Any, Dict, Callable, Optional, Tuple
 from omegaconf import OmegaConf
 import logging
-import warnings
 from importlib.util import find_spec
 from omegaconf import DictConfig
 

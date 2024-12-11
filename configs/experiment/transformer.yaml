@@ -1,0 +1,62 @@
+# @package _global_
+
+# to execute this experiment run:
+# python src/train.py experiment=filter
+
+defaults:
+  - override /data: PhoMT
+  - override /model: transformer
+  - override /trainer: default
+  - override /logger: null
+
+# all parameters below will be merged with parameters from default configurations set above
+# this allows you to overwrite only specified parameters
+
+seed: 59
+ckpt_path: null
+train: True
+test: False
+
+
+# ------------------override configs/trainer------------------
+trainer:
+  min_epochs: 1 # prevents early stopping
+  max_epochs: 1
+  accelerator: cpu
+  devices: 1
+  log_every_n_steps: 10
+
+
+# ------------------override configs/model------------------
+model:
+  net: 
+    num_encoder_layers: 3
+    num_decoder_layers: 3
+    emb_size: 192
+    nhead: 6
+    src_vocab_size: 34687 # len(en_vocab)
+    tgt_vocab_size: 21681 # len(vi_vocab)
+    dim_feedforward: 192
+    dropout: 0.1
+
+  optimizer:
+    lr: 0.0001
+    betas: [0.9, 0.98]
+    eps: 1e-9
+
+  scheduler: null
+
+
+# ------------------override configs/data------------------
+data:
+  train_split: [0, 10000]
+  batch_size: 128
+  num_workers: 4
+  pin_memory: False
+
+
+# ------------------override configs/logger------------------
+logger:
+  name: "transformer-torch"
+  project: "machine-translation-en2vi"
+  log_model: False # upload lightning ckpts

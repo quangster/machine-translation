@@ -51,14 +51,17 @@ class TransformerModule(LightningModule):
         self.criterion = torch.nn.CrossEntropyLoss(ignore_index=0) # ignore padding index
         # metrics
         self.train_loss = MeanMetric()
-        self.train_ppl = MeanMetric()
-
         self.val_loss = MeanMetric()
-        self.val_ppl = MeanMetric()
-        self.val_bleu = MaxMetric()
+        self.test_loss = MeanMetric()
 
+        self.train_ppl = MeanMetric()
+        self.val_ppl = MeanMetric()
+        self.test_ppl = MeanMetric()
+        
+        self.val_bleu = MaxMetric()
         self.val_loss_best = MinMetric()
         self.val_bleu_best = MaxMetric()
+        self.test_bleu = MaxMetric()
 
     def forward(
         self,
@@ -93,7 +96,7 @@ class TransformerModule(LightningModule):
         tgt_input = tgt[:, :-1]
         tgt_out = tgt[:, 1:]
 
-        src_mask, tgt_mask, src_padding_mask, tgt_padding_mask = self.net.create_mask(src, tgt_input, self.device)
+        src_mask, tgt_mask, src_padding_mask, tgt_padding_mask = self.net.create_mask(src, tgt_input, device=src.device)
         
         logits = self.net(
             src, 
@@ -150,6 +153,24 @@ class TransformerModule(LightningModule):
         self.val_loss_best(loss) # update best so far val loss
 
         self.log("val/loss_best", self.val_loss_best.compute(), sync_dist=True, prog_bar=True)
+
+    def test_step(
+        self, 
+        batch: Tuple[torch.Tensor, torch.Tensor],
+        batch_idx: int
+    ):
+        loss = self.model_step(batch, batch_idx)
+
+        # update metrics
+        self.test_loss(loss)
+        self.test_ppl(torch.exp(loss))
+
+        # log
+        self.log("test/loss", self.test_loss, on_step=False, on_epoch=True, prog_bar=True)
+        self.log("test/ppl", self.test_ppl, on_step=False, on_epoch=True, prog_bar=True)
+
+        return loss
+        
 
     def configure_optimizers(self):
         optimizer = self.hparams.optimizer(params=self.trainer.model.parameters())
