@@ -23,11 +23,22 @@ def check_and_download_data():
 
 
 def install_more():
+    print("\033[92mInstall more\033[0m")
+
     import nltk
     nltk.download('punkt_tab')
 
 
 if __name__ == '__main__':
-    install_requirements()
+    import argparse
+
+    parser = argparse.ArgumentParser(description='Setup script for machine translation project')
+    parser.add_argument('--skip-install', action='store_true', help='Skip installing requirements')
+    args = parser.parse_args()
+
+    if not args.skip_install:
+        install_requirements()
+    
     check_and_download_data()
     install_more()
+    print("\033[92mDone\033[0m")
