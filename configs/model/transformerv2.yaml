@@ -1,0 +1,22 @@
+_target_: src.models.transformer_module_v2.TransformerModuleV2
+
+net:
+  _target_: src.models.components.TransformerScratch
+  src_vocab: 34687 # len(en_vocab)
+  trg_vocab: 21681 # len(vi_vocab)
+  d_model: 128
+  N: 2
+  heads: 8
+  dropout: 0.1
+
+criterion:
+  _target_: src.loss.LabelSmoothingLoss
+  classes: 21681 # len(vi_vocab)
+  padding_idx: 0
+  smoothing: 0.1
+
+optimizer:
+  _target_: torch.optim.AdamW
+  _partial_: true
+  lr: 0.0001
+  

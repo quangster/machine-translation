@@ -2,9 +2,11 @@ import torch
 from lightning import LightningModule
 from torchmetrics import MeanMetric, MinMetric, MaxMetric
 from typing import Tuple
+import torch.nn as nn
+from transformers import get_scheduler
 
 
-class TransformerModule(LightningModule):
+class TransformerModuleV2(LightningModule):
     """A `LightningModule` implements 8 key methods: ```python def __init__(self): # Define
     initialization code here.
 
@@ -32,10 +34,10 @@ class TransformerModule(LightningModule):
     def __init__(
         self,
         net: torch.nn.Module,
+        criterion: torch.nn.Module,
         optimizer: torch.optim.Optimizer,
-        scheduler: torch.optim.lr_scheduler,
     ):
-        """ Initialize a `TransformerModule`.
+        """ Initialize a `TransformerModuleV2`.
 
         Args:
             net (torch.nn.Module): The model to train
@@ -45,10 +47,10 @@ class TransformerModule(LightningModule):
         super().__init__()
 
         self.save_hyperparameters(logger=False, ignore=["net"])
-
         self.net = net
-        # loss function
-        self.criterion = torch.nn.CrossEntropyLoss(ignore_index=0) # ignore padding index
+        self.criterion = criterion
+        self._reset_parameters()
+
         # metrics
         self.train_loss = MeanMetric()
         self.val_loss = MeanMetric()
@@ -62,25 +64,38 @@ class TransformerModule(LightningModule):
         self.val_loss_best = MinMetric()
         self.val_bleu_best = MaxMetric()
         self.test_bleu = MaxMetric()
+    
+    def _reset_parameters(self):
+        for p in self.parameters():
+            if p.dim() > 1:
+                nn.init.xavier_uniform_(p)
+    
+    def _create_masks(self, src, trg, src_pad, trg_pad):
+        """
+        Tạo mask cho encoder và decoder:
+        - src_mask: Che padding token trong chuỗi nguồn.
+        - trg_mask: Kết hợp mask padding và look-ahead mask trong chuỗi đích.
+        """
+        # Tạo src_mask: (batch_size, 1, seq_length_src)
+        src_mask = (src != src_pad).unsqueeze(1)
 
-    def forward(
-        self,
-        src: torch.Tensor,
-        tgt: torch.Tensor,
-        src_mask: torch.Tensor,
-        tgt_mask: torch.Tensor,
-        src_key_padding_mask: torch.Tensor,
-        tgt_key_padding_mask: torch.Tensor,
-        memory_key_padding_mask: torch.Tensor
-    ) -> torch.Tensor:
-        # src: (batch_size, src_seq_len)
-        # tgt: (batch_size, tgt_seq_len)
-        # src_mask: (src_seq_len, src_seq_len)
-        # tgt_mask: (tgt_seq_len, tgt_seq_len)
-        # src_key_padding_mask: (batch_size, src_seq_len)
-        # tgt_key_padding_mask: (batch_size, tgt_seq_len)
-        # memory_key_padding_mask: (batch_size, src_seq_len)
-        return self.net(src, tgt, src_mask, tgt_mask, src_key_padding_mask, tgt_key_padding_mask, memory_key_padding_mask)
+        device = src_mask.device
+
+        trg_mask = None
+        if trg is not None:
+            # Mask padding: (batch_size, 1, seq_length_trg)
+            trg_padding_mask = (trg != trg_pad).unsqueeze(1)
+
+            # Mask look-ahead: (seq_length_trg, seq_length_trg)
+            trg_seq_len = trg.size(1)
+            look_ahead_mask = torch.triu(torch.ones((trg_seq_len, trg_seq_len), device=device), diagonal=1).bool()
+
+            # Kết hợp padding mask và look-ahead mask: (batch_size, seq_length_trg, seq_length_trg)
+            trg_mask = trg_padding_mask & ~look_ahead_mask.unsqueeze(0)
+        return src_mask, trg_mask
+
+    def forward(self, src, tgt, src_mask, tgt_mask):
+        return self.net(src, tgt, src_mask, tgt_mask)
     
     def on_train_start(self):
         self.val_loss.reset()
@@ -96,18 +111,8 @@ class TransformerModule(LightningModule):
         tgt_input = tgt[:, :-1]
         tgt_out = tgt[:, 1:]
 
-        src_mask, tgt_mask, src_padding_mask, tgt_padding_mask = self.net.create_mask(src, tgt_input, device=src.device)
-        
-        logits = self.net(
-            src, 
-            tgt_input, 
-            src_mask, 
-            tgt_mask,
-            src_padding_mask, 
-            tgt_padding_mask, 
-            src_padding_mask
-        )
-
+        src_mask, trg_mask = self._create_masks(src, tgt_input, 0, 0)
+        logits = self.net(src, tgt_input, src_mask, trg_mask)
         loss = self.criterion(logits.view(-1, logits.size(-1)), tgt_out.contiguous().view(-1))
         return loss
 
@@ -116,6 +121,7 @@ class TransformerModule(LightningModule):
         batch: Tuple[torch.Tensor, torch.Tensor],
         batch_idx: int
     ) -> torch.Tensor:
+        
         self.net.train()
         loss = self.model_step(batch, batch_idx)
 
@@ -124,8 +130,11 @@ class TransformerModule(LightningModule):
         self.train_ppl(torch.exp(loss))
 
         # log
-        self.log("train/loss", self.train_loss, on_step=False, on_epoch=True, prog_bar=True)
-        self.log("train/ppl", self.train_ppl, on_step=False, on_epoch=True, prog_bar=True)
+        self.log("train/loss", self.train_loss, on_step=True, on_epoch=True, prog_bar=True)
+        self.log("train/ppl", self.train_ppl, on_step=True, on_epoch=True, prog_bar=True)
+
+        # # log learning rate
+        # self.log("train/lr", self.trainer.optimizers[0].param_groups[0]['lr'], on_step=True, on_epoch=True, prog_bar=True)
 
         return loss
     
@@ -137,6 +146,7 @@ class TransformerModule(LightningModule):
         batch: Tuple[torch.Tensor, torch.Tensor],
         batch_idx: int
     ) -> torch.Tensor:
+        
         self.net.eval()
         with torch.inference_mode():
             loss = self.model_step(batch, batch_idx)
@@ -146,8 +156,8 @@ class TransformerModule(LightningModule):
         self.val_ppl(torch.exp(loss))
 
         # log
-        self.log("val/loss", self.val_loss, on_step=False, on_epoch=True, prog_bar=True)
-        self.log("val/ppl", self.val_ppl, on_step=False, on_epoch=True, prog_bar=True)
+        self.log("val/loss", self.val_loss, on_step=True, on_epoch=True, prog_bar=True)
+        self.log("val/ppl", self.val_ppl, on_step=True, on_epoch=True, prog_bar=True)
 
         return loss
     
@@ -162,21 +172,34 @@ class TransformerModule(LightningModule):
         batch: Tuple[torch.Tensor, torch.Tensor],
         batch_idx: int
     ):
-        loss = self.model_step(batch, batch_idx)
+        
+        self.net.eval()
+        with torch.inference_mode():
+            loss = self.model_step(batch, batch_idx)
 
         # update metrics
         self.test_loss(loss)
         self.test_ppl(torch.exp(loss))
 
         # log
-        self.log("test/loss", self.test_loss, on_step=False, on_epoch=True, prog_bar=True)
-        self.log("test/ppl", self.test_ppl, on_step=False, on_epoch=True, prog_bar=True)
+        self.log("test/loss", self.test_loss, on_step=True, on_epoch=True, prog_bar=True)
+        self.log("test/ppl", self.test_ppl, on_step=True, on_epoch=True, prog_bar=True)
 
         return loss
         
-
     def configure_optimizers(self):
         optimizer = self.hparams.optimizer(params=self.trainer.model.parameters())
-        return {"optimizer": optimizer}
+        lr_scheduler = get_scheduler(
+            "linear", optimizer, num_warmup_steps=4000, 
+            num_training_steps=self.trainer.estimated_stepping_batches
+        )
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": {
+                "scheduler": lr_scheduler,
+                "interval": "step",
+                "frequency": 1,
+            }
+        }
         
         

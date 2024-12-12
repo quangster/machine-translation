@@ -3,7 +3,7 @@ import rootutils
 import hydra
 import logging
 
-from lightning.pytorch.callbacks import RichModelSummary, ModelCheckpoint, RichProgressBar
+from lightning.pytorch.callbacks import RichModelSummary, ModelCheckpoint, RichProgressBar, LearningRateMonitor
 from lightning.pytorch.loggers.wandb import WandbLogger
 from lightning import LightningDataModule, LightningModule, Trainer
 import lightning as L
@@ -62,10 +62,12 @@ def train(cfg: DictConfig):
             auto_insert_metric_name=False,
         ),
         RichProgressBar(),
-        RichModelSummary(max_depth=1)
+        RichModelSummary(max_depth=1),
+        LearningRateMonitor(
+            logging_interval="step",
+        )
     ]
     
-
     log.info("Instantiating loggers...")
     logger: WandbLogger = hydra.utils.instantiate(cfg.logger) if cfg.get("logger") else None
 
