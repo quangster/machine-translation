@@ -8,6 +8,9 @@ from lightning.pytorch.loggers.wandb import WandbLogger
 from lightning import LightningDataModule, LightningModule, Trainer
 import lightning as L
 
+import numpy as np
+import torch
+
 
 rootutils.setup_root(__file__, indicator=".project-root", pythonpath=True) 
 
@@ -31,8 +34,15 @@ def train(cfg: DictConfig):
     :param cfg: A DictConfig configuration composed by Hydra.
     :return: A tuple with metrics and dict with all instantiated objects.
     """
+    
     if cfg.get("seed"):
-        L.seed_everything(cfg.seed, workers=True)
+        seed = cfg.seed
+        L.seed_everything(seed, workers=True)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed(seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = True
     
     log.info(f"Instantiating datamodule <{cfg.data._target_}>")
     datamodule: LightningDataModule = hydra.utils.instantiate(cfg.data)
@@ -57,7 +67,7 @@ def train(cfg: DictConfig):
     
 
     log.info("Instantiating loggers...")
-    logger: WandbLogger = hydra.utils.instantiate(cfg.logger.wandb) if cfg.get("logger").get("wandb") else None
+    logger: WandbLogger = hydra.utils.instantiate(cfg.logger) if cfg.get("logger") else None
 
     log.info(f"Instantiating trainer <{cfg.trainer._target_}>")
     trainer: Trainer = hydra.utils.instantiate(cfg.trainer, callbacks=callbacks, logger=logger)

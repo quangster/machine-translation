@@ -1,13 +1,11 @@
 from typing import Optional, Tuple, Any, Dict
-from tqdm import tqdm
+import pickle
 from lightning import LightningDataModule
 from torch.utils.data import DataLoader, Dataset
 
 from .mtdataset import MTDataset
 from .vocabulary import Vocabulary
 from .tokenizer import EnTokenizer, ViTokenizer
-
-from src.utils.data import read_corpus
 
 
 class PhoMTDataModule(LightningDataModule):
@@ -78,12 +76,6 @@ class PhoMTDataModule(LightningDataModule):
 
     def prepare_data(self):
         pass
-    
-    def tokenize_sents(self, en_sents: list[str], vi_sents: list[str]) -> Tuple[list[list[str]], list[list[str]]]:
-        en_sents = [self.en_tokenizer.tokenize(sent.lower()) for sent in tqdm(en_sents)]
-        vi_sents = [self.vi_tokenizer.tokenize(sent.lower()) for sent in tqdm(vi_sents)]
-        return en_sents, vi_sents
-
 
     def setup(self, stage: Optional[str]=None) -> None:
         """Load data. Set variables: `self.train_dataset`, `self.val_dataset`, `self.test_dataset`.
@@ -100,39 +92,44 @@ class PhoMTDataModule(LightningDataModule):
         self.en_vocab = Vocabulary.load(self.hparams.en_vocab_path)
         self.vi_vocab = Vocabulary.load(self.hparams.vi_vocab_path)
 
-        train_en_sents, train_vi_sents = read_corpus(self.hparams.data_dir, "train")
-        val_en_sents, val_vi_sents = read_corpus(self.hparams.data_dir, "dev")
-        test_en_sents, test_vi_sents = read_corpus(self.hparams.data_dir, "test")
+        with open(f"{self.hparams.data_dir}/train.pkl", "rb") as f:
+            train = pickle.load(f)
+            train_en_ids, train_vi_ids = train[0], train[1]
+        
+        with open(f"{self.hparams.data_dir}/dev.pkl", "rb") as f:
+            dev = pickle.load(f)
+            dev_en_ids, dev_vi_ids = dev[0], dev[1]
+        
+        with open(f"{self.hparams.data_dir}/test.pkl", "rb") as f:
+            test = pickle.load(f)
+            test_en_ids, test_vi_ids = test[0], test[1]
 
-        train_en_sents = train_en_sents[self.hparams.train_split[0]:self.hparams.train_split[1]]
-        train_vi_sents = train_vi_sents[self.hparams.train_split[0]:self.hparams.train_split[1]]
-
-        train_en_sents, train_vi_sents = self.tokenize_sents(train_en_sents, train_vi_sents)
-        val_en_sents, val_vi_sents = self.tokenize_sents(val_en_sents, val_vi_sents)
-        test_en_sents, test_vi_sents = self.tokenize_sents(test_en_sents, test_vi_sents)
+        train_en_ids = train_en_ids[self.hparams.train_split[0]:self.hparams.train_split[1]]
+        train_vi_ids = train_vi_ids[self.hparams.train_split[0]:self.hparams.train_split[1]]
 
         self.train_dataset = MTDataset(
-            inputs=[self.en_vocab.words2indexes(sent, add_sos_eos=True) for sent in train_en_sents],
-            outputs=[self.vi_vocab.words2indexes(sent, add_sos_eos=True) for sent in train_vi_sents],
+            inputs=train_en_ids,
+            outputs=train_vi_ids,
             max_length=self.hparams.max_length,
             padding_idx=self.en_vocab['<pad>'],
         )
 
         self.val_dataset = MTDataset(
-            inputs=[self.en_vocab.words2indexes(sent, add_sos_eos=True) for sent in val_en_sents],
-            outputs=[self.vi_vocab.words2indexes(sent, add_sos_eos=True) for sent in val_vi_sents],
+            inputs=dev_en_ids,
+            outputs=dev_vi_ids,
             max_length=self.hparams.max_length,
             padding_idx=self.en_vocab['<pad>'],
         )
 
         self.test_dataset = MTDataset(
-            inputs=[self.en_vocab.words2indexes(sent, add_sos_eos=True) for sent in test_en_sents],
-            outputs=[self.vi_vocab.words2indexes(sent, add_sos_eos=True) for sent in test_vi_sents],
+            inputs=test_en_ids,
+            outputs=test_vi_ids,
             max_length=self.hparams.max_length,
             padding_idx=self.en_vocab['<pad>'],
         )
-
-        print(len(self.train_dataset), len(self.val_dataset), len(self.test_dataset))
+        print(f"Train dataset length: {len(self.train_dataset)}")
+        print(f"Validation dataset length: {len(self.val_dataset)}")
+        print(f"Test dataset length: {len(self.test_dataset)}")
 
     def train_dataloader(self) -> DataLoader[Any]:
         """Create and return the train dataloader.

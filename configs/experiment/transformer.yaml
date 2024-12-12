@@ -7,7 +7,7 @@ defaults:
   - override /data: PhoMT
   - override /model: transformer
   - override /trainer: default
-  - override /logger: null
+  - override /logger: wandb
 
 # all parameters below will be merged with parameters from default configurations set above
 # this allows you to overwrite only specified parameters
@@ -15,7 +15,7 @@ defaults:
 seed: 59
 ckpt_path: null
 train: True
-test: False
+test: True
 
 
 # ------------------override configs/trainer------------------
@@ -30,13 +30,13 @@ trainer:
 # ------------------override configs/model------------------
 model:
   net: 
-    num_encoder_layers: 3
-    num_decoder_layers: 3
-    emb_size: 192
-    nhead: 6
+    num_encoder_layers: 6
+    num_decoder_layers: 6
+    emb_size: 256
+    nhead: 8
     src_vocab_size: 34687 # len(en_vocab)
     tgt_vocab_size: 21681 # len(vi_vocab)
-    dim_feedforward: 192
+    dim_feedforward: 256
     dropout: 0.1
 
   optimizer:

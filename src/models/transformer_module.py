@@ -116,6 +116,7 @@ class TransformerModule(LightningModule):
         batch: Tuple[torch.Tensor, torch.Tensor],
         batch_idx: int
     ) -> torch.Tensor:
+        self.net.train()
         loss = self.model_step(batch, batch_idx)
 
         # update metrics
@@ -136,7 +137,9 @@ class TransformerModule(LightningModule):
         batch: Tuple[torch.Tensor, torch.Tensor],
         batch_idx: int
     ) -> torch.Tensor:
-        loss = self.model_step(batch, batch_idx)
+        self.net.eval()
+        with torch.inference_mode():
+            loss = self.model_step(batch, batch_idx)
 
         # update metrics
         self.val_loss(loss)
