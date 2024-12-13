@@ -1,6 +1,7 @@
 import torch
 from lightning import LightningModule
-from torchmetrics import MeanMetric, MinMetric, MaxMetric
+from lightning.pytorch.loggers.wandb import WandbLogger
+from torchmetrics import MeanMetric, MinMetric, SumMetric
 from typing import Tuple
 import torch.nn as nn
 from transformers import get_scheduler
@@ -60,13 +61,12 @@ class TransformerModuleV2(LightningModule):
         self.val_ppl = MeanMetric()
         self.test_ppl = MeanMetric()
         
-        self.val_bleu = MaxMetric()
+        self.val_bleu = SumMetric()
         self.val_loss_best = MinMetric()
-        self.val_bleu_best = MaxMetric()
-        self.test_bleu = MaxMetric()
+        self.test_bleu = SumMetric()
     
     def _reset_parameters(self):
-        for p in self.parameters():
+        for p in self.net.parameters():
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
     
@@ -114,7 +114,7 @@ class TransformerModuleV2(LightningModule):
         src_mask, trg_mask = self._create_masks(src, tgt_input, 0, 0)
         logits = self.net(src, tgt_input, src_mask, trg_mask)
         loss = self.criterion(logits.view(-1, logits.size(-1)), tgt_out.contiguous().view(-1))
-        return loss
+        return loss, logits
 
     def training_step(
         self, 
@@ -123,7 +123,7 @@ class TransformerModuleV2(LightningModule):
     ) -> torch.Tensor:
         
         self.net.train()
-        loss = self.model_step(batch, batch_idx)
+        loss, logits = self.model_step(batch, batch_idx)
 
         # update metrics
         self.train_loss(loss)
@@ -133,13 +133,26 @@ class TransformerModuleV2(LightningModule):
         self.log("train/loss", self.train_loss, on_step=True, on_epoch=True, prog_bar=True)
         self.log("train/ppl", self.train_ppl, on_step=True, on_epoch=True, prog_bar=True)
 
-        # # log learning rate
-        # self.log("train/lr", self.trainer.optimizers[0].param_groups[0]['lr'], on_step=True, on_epoch=True, prog_bar=True)
+        x, y = batch
+        self.train_last_batch = {
+            "src": x.detach().cpu().numpy(),
+            "tgt": y.detach().cpu().numpy(),
+            "pred": logits.argmax(dim=-1).detach().cpu().numpy(),
+        }
 
         return loss
     
     def on_train_epoch_end(self) -> None:
-        pass
+        if isinstance(self.logger, WandbLogger):
+            columns = ["src", "tgt", "pred"]
+            data = []
+            for src, tgt, pred in zip(*[self.train_last_batch[col] for col in columns]):
+                src = self.trainer.datamodule.indexes_to_sentence(src, is_src_lang=True)
+                tgt = self.trainer.datamodule.indexes_to_sentence(tgt, is_src_lang=False)
+                pred = self.trainer.datamodule.indexes_to_sentence(pred, is_src_lang=False)
+                data.append([src, tgt, pred])
+
+            self.logger.log_text(key="train_sample", columns=columns, data=data)
 
     def validation_step(
         self, 
@@ -149,15 +162,32 @@ class TransformerModuleV2(LightningModule):
         
         self.net.eval()
         with torch.inference_mode():
-            loss = self.model_step(batch, batch_idx)
+            loss, logits = self.model_step(batch, batch_idx)
+
+        targets = batch[1][:, 1:].cpu().numpy()
+        preds = logits.argmax(dim=-1).cpu().numpy()
+
+        preds = [self.trainer.datamodule.indexes_to_sentence(p, is_src_lang=False) for p in preds]
+        targets = [self.trainer.datamodule.indexes_to_sentence(t, is_src_lang=False) for t in targets]
+
+        bleu_score = self.trainer.datamodule.bleu_score(preds, targets)
 
         # update metrics
         self.val_loss(loss)
         self.val_ppl(torch.exp(loss))
+        self.val_bleu(bleu_score)
 
         # log
         self.log("val/loss", self.val_loss, on_step=True, on_epoch=True, prog_bar=True)
         self.log("val/ppl", self.val_ppl, on_step=True, on_epoch=True, prog_bar=True)
+        self.log("val/bleu", self.val_bleu, on_step=False, on_epoch=True, prog_bar=True)
+
+        x, y = batch
+        self.val_last_batch = {
+            "src": x.detach().cpu().numpy(),
+            "tgt": y.detach().cpu().numpy(),
+            "pred": logits.argmax(dim=-1).detach().cpu().numpy(),
+        }
 
         return loss
     
@@ -167,6 +197,18 @@ class TransformerModuleV2(LightningModule):
 
         self.log("val/loss_best", self.val_loss_best.compute(), sync_dist=True, prog_bar=True)
 
+        if isinstance(self.logger, WandbLogger):
+            columns = ["src", "tgt", "pred"]
+            data = []
+            for src, tgt, pred in zip(*[self.val_last_batch[col] for col in columns]):
+                src = self.trainer.datamodule.indexes_to_sentence(src, is_src_lang=True)
+                tgt = self.trainer.datamodule.indexes_to_sentence(tgt, is_src_lang=False)
+                pred = self.trainer.datamodule.indexes_to_sentence(pred, is_src_lang=False)
+                data.append([src, tgt, pred])
+
+            self.logger.log_text(key="valid_sample", columns=columns, data=data)
+
+        
     def test_step(
         self, 
         batch: Tuple[torch.Tensor, torch.Tensor],
@@ -175,15 +217,25 @@ class TransformerModuleV2(LightningModule):
         
         self.net.eval()
         with torch.inference_mode():
-            loss = self.model_step(batch, batch_idx)
+            loss, logits = self.model_step(batch, batch_idx)
+        
+        targets = batch[1][:, 1:].cpu().numpy()
+        preds = logits.argmax(dim=-1).cpu().numpy()
+
+        preds = [self.trainer.datamodule.indexes_to_sentence(p, is_src_lang=False) for p in preds]
+        targets = [self.trainer.datamodule.indexes_to_sentence(t, is_src_lang=False) for t in targets]
+
+        bleu_score = self.trainer.datamodule.bleu_score(preds, targets)
 
         # update metrics
         self.test_loss(loss)
         self.test_ppl(torch.exp(loss))
+        self.test_bleu(bleu_score)
 
         # log
         self.log("test/loss", self.test_loss, on_step=True, on_epoch=True, prog_bar=True)
         self.log("test/ppl", self.test_ppl, on_step=True, on_epoch=True, prog_bar=True)
+        self.log("test/bleu", self.test_bleu, on_step=False, on_epoch=True, prog_bar=True)
 
         return loss
         

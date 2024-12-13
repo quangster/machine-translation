@@ -3,6 +3,7 @@ data_dir: ${paths.data_dir}
 en_vocab_path: ${paths.root_dir}/ckpts/en_vocab.json
 vi_vocab_path: ${paths.root_dir}/ckpts/vi_vocab.json
 train_split: [0, 100000]
+max_length: 20
 batch_size: 64
 num_workers: 0
 pin_memory: False

@@ -2,6 +2,7 @@ from typing import Optional, Tuple, Any, Dict
 import pickle
 from lightning import LightningDataModule
 from torch.utils.data import DataLoader, Dataset
+from torchmetrics.text.bleu import BLEUScore
 
 from .mtdataset import MTDataset
 from .vocabulary import Vocabulary
@@ -71,8 +72,14 @@ class PhoMTDataModule(LightningDataModule):
         self.save_hyperparameters(logger=False)
         self.train_dataset: Optional[Dataset] = None
         self.val_dataset: Optional[Dataset] = None
+        self.test_dataset: Optional[Dataset] = None
 
         self.batch_size_per_device = batch_size
+        self.en_tokenizer = EnTokenizer()
+        self.vi_tokenizer = ViTokenizer()
+        self.en_vocab = Vocabulary.load(self.hparams.en_vocab_path)
+        self.vi_vocab = Vocabulary.load(self.hparams.vi_vocab_path)
+        self.bleu = BLEUScore()
 
     def prepare_data(self):
         pass
@@ -87,10 +94,6 @@ class PhoMTDataModule(LightningDataModule):
 
         :param stage: The stage to setup. Either `"fit"`, `"validate"`, `"test"`, or `"predict"`. Defaults to ``None``.
         """
-        self.en_tokenizer = EnTokenizer()
-        self.vi_tokenizer = ViTokenizer()
-        self.en_vocab = Vocabulary.load(self.hparams.en_vocab_path)
-        self.vi_vocab = Vocabulary.load(self.hparams.vi_vocab_path)
 
         with open(f"{self.hparams.data_dir}/train.pkl", "rb") as f:
             train = pickle.load(f)
@@ -193,6 +196,30 @@ class PhoMTDataModule(LightningDataModule):
         :param state_dict: The datamodule state returned by `self.state_dict()`.
         """
         pass
+
+    def indexes_to_sentence(self, indexes: list[int], is_src_lang: bool=True) -> str:
+        """Convert a list of indexes to a string of words.
+
+        Args:
+            indexes (list[int]): A list of indexes.
+            is_src_lang (bool, optional): Whether the indexes are for the source language. Defaults to True.
+
+        Returns:
+            str: A string of words.
+        """
+        if is_src_lang:
+            vocab = self.en_vocab
+        else:
+            vocab = self.vi_vocab
+        
+        indexes = [idx for idx in indexes if idx != vocab['<pad>']]
+        
+        return " ".join(vocab.indexes2words(indexes))
+    
+    def bleu_score(self, preds: list[str], targets: list[str]) -> float:
+        targets = [[t] for t in targets]
+        return self.bleu(preds, targets)
         
 if __name__ == "__main__":
     _ = PhoMTDataModule()
+    # print(datamodule.indexes_to_sentence([1, 2, 3, 4, 5, 0, 0, 0]))
