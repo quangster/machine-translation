@@ -21,10 +21,10 @@ test: True
 # ------------------override configs/trainer------------------
 trainer:
   min_epochs: 1 # prevents early stopping
-  max_epochs: 1
-  accelerator: cpu
+  max_epochs: 10
+  accelerator: gpu
   devices: 1
-  log_every_n_steps: 10
+  log_every_n_steps: 100
 
 
 # ------------------override configs/model------------------
@@ -32,9 +32,9 @@ model:
   net:
     src_vocab: 34687 # len(en_vocab)
     trg_vocab: 21681 # len(vi_vocab)
-    d_model: 128
-    N: 3 # num encoder and decoder layers
-    heads: 8
+    d_model: 192
+    N: 8 # num encoder and decoder layers
+    heads: 6
     dropout: 0.1
 
   criterion:
@@ -49,8 +49,8 @@ model:
 
 # ------------------override configs/data------------------
 data:
-  train_split: [0, 10000]
-  max_length: 20
+  train_split: [0, 500000]
+  max_length: 50
   batch_size: 128
   num_workers: 4
   pin_memory: False
